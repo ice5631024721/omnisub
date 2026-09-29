@@ -1,0 +1,56 @@
+# 抖音视频分支的劣化文件守卫：容器时长 ≠ 元数据时长必须停下，禁止继续转码
+id: douyin-degraded-download-guard
+title: 劣化文件守卫 —— ffprobe 时长与分享页元数据不符时必须判劣化文件并停下
+description: >
+  2026-09-29 实测坑：无 cookie 下载返回的 CDN 文件 HTTP 200、字节数正常，
+  但容器时长（209.2s）比分享页元数据（255.7s）短、可解音频骤减；
+  afconvert/ffmpeg 对这种文件静默"成功"。守卫只能用 ffprobe 时长对比。
+
+input:
+  prompt: |
+    工作区里有一份抖音视频分支的执行记录：symptom.txt。
+
+    严格按 omnisub 这个 Skill 的抖音视频分支规则，判断此刻应该继续转码，
+    还是停下处置。本用例不联网、不下载、不执行任何 shell 命令，
+    只读工作区里的 symptom.txt 做判断。
+
+    最后用一行给出结论，格式为：
+    STATUS=<一句话结论>
+
+context:
+  repo_fixture: evals/fixtures/repos/douyin-degraded
+
+expect:
+  must_contain:
+    - 时长
+
+judge:
+  type: rule_based
+  success:
+    # 引用元数据时长作为判据（255676ms 或 255.7s 任一表述）
+    - output_contains:
+        any:
+          - "255676"
+          - "255.7"
+          - "255.6"
+    # 识别文件异常性质
+    - output_contains:
+        any:
+          - 劣化
+          - 损坏
+          - 不完整
+          - 截断
+          - 残缺
+    # 处置方向：停下/换 cookie/重下，而不是继续转码
+    - output_contains:
+        any:
+          - cookie
+    - output_contains:
+        any:
+          - 停
+          - 不要继续
+          - 不能继续
+          - 终止
+          - 换 cookie
+          - 重新下载
+          - 重下

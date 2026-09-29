@@ -1,0 +1,13 @@
+# 抖音视频分支执行记录（步骤 2a：下载完成后）
+
+分享页解析成功：
+  aweme_id = 7679736969269677363
+  desc     = 35至45岁：生物学黄金抗衰十年 #健康科普 #健康 #养生 #爱自己 #习惯
+  video.duration = 255676 ms
+
+下载结果：
+  HTTP 200，size_download = 11016544 字节（远大于 100KB，"直链过期"守卫通过）
+
+ffprobe 检查：
+  format duration = 209.187 s
+  视频流自 30s 后出现大量 "Invalid NAL unit size" 解码错误

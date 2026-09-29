@@ -1,15 +1,33 @@
 ---
 name: omnisub
-description: 视频/图片转文字与字幕入口。抖音链接（v.douyin.com 或 www.douyin.com）要求提取内容/转文字/识别图片文字时使用；本地视频文件（含 MKV）要求转写、出字幕、要时间轴、要双语/中英字幕、或指定语言字幕时同样使用。覆盖三条分支：抖音有声视频→ASR 转写（qwen-audio-3.1-asr-flash）；单图或轮播图→下载图片后视觉读图；本地视频文件→**任意源语言**转**任意语言对**的双语带样式 ASS 字幕（默认 en,zh；译文在上、原文沉底：中文片英上中下、英文片中上英下）。
+description: 视频/图片转文字与字幕入口。抖音链接（v.douyin.com 或 www.douyin.com）要求提取内容/转文字/识别图片文字时使用；本地视频文件（含 MKV）要求转写、出字幕、要时间轴、要双语/中英字幕、或指定语言字幕时同样使用。覆盖三条分支：抖音有声视频→固化的 douyin2txt.py（分享页解析 + cookie 下载 + 劣化文件守卫 + fun-asr 转写）；单图或轮播图→下载图片后视觉读图；本地视频文件→**任意源语言**转**任意语言对**的双语带样式 ASS 字幕（默认 en,zh；译文在上、原文沉底：中文片英上中下、英文片中上英下）。
 ---
 
 # omnisub：视频 / 图片 → 文字与字幕
 
 三条输入分支共用一个入口；**抖音链接 → 文字**走下面这套验证过的分享页路线。
 
-给一个抖音链接，产出完整内容文本。**yt-dlp 的 Douyin 提取器当前被 a_bogus 签名风控挡死（2026-09 实测连 master + 登录 cookie 均 403），禁用 yt-dlp 取抖音**，走下面验证过的分享页路线。
+给一个抖音链接，产出完整内容文本。**yt-dlp 的 Douyin 提取器当前被 a_bogus 签名风控挡死，禁用 yt-dlp 取抖音**（最近复测 2026-09-29：stable 2026.08.19 与 master 2026.09.27、带与不带 cookie 全部 403 "Fresh cookies are needed"），走下面验证过的分享页路线。
 
-cookie 依赖：分享页 SSR 需要登录态 cookie 才内嵌视频数据。cookie 存于 `~/.dsh/douyin-cookies.txt`（单行 `k=v; k=v` 格式）；失效（item_list 为空）时向用户要一份新的 DevTools curl 里的 `-b` 串覆盖该文件。
+cookie 依赖：分享页 SSR 需要登录态 cookie 才内嵌视频数据；**CDN 视频下载同样需要 cookie**——无 cookie 时返回劣化损坏文件（HTTP 200、Content-Length 与实收一致，下载器看不出异常；但容器时长比元数据短、视频流 NAL 全错、音频实际可解时长骤减。2026-09-29 实测：255.7s 的视频只给回 209.2s 壳、可解音频仅 51.9s）。cookie 存于 `~/.dsh/douyin-cookies.txt`（单行 `k=v; k=v` 格式）；失效（item_list 为空或时长守卫触发）时向用户要一份新的 DevTools curl 里的 `-b` 串覆盖该文件。
+
+## 首选入口：固化脚本一条命令（2026-09-29 固化）
+
+```bash
+# 抖音链接 → 文字（cookie 下载、劣化文件守卫、fun-asr 转写、覆盖守卫、计时全内置）
+python3 <skill根>/scripts/douyin2txt.py "<分享链接>"
+python3 <skill根>/scripts/douyin2txt.py "<链接>" --out /tmp/dy_transcript.txt
+python3 <skill根>/scripts/douyin2txt.py "<链接>" --images   # 图片/轮播帖：只下载图片并打印路径
+```
+
+脚本固化的守卫（都不需要人工判断）：
+1. **下载带 cookie + UA + Referer**（坑：无 cookie 的 CDN 劣化文件，从 HTTP 状态与字节数完全看不出问题）；
+2. **时长守卫**：`ffprobe` 容器时长 vs 分享页元数据 `duration`，差 >2s 判劣化文件并明确报错——**afconvert 对损坏文件会静默按索引填充静音"成功"，ffmpeg 只解出前几十秒也不报错；时长判据只有 ffprobe 可靠**；
+3. **转写走 fun-asr（异步 filetrans）**：上传内置，必须 MP3 32k（WAV 实测 SERVER_ERROR；同步模型 qwen-audio-3.1-asr-flash 在 bl 里会把本地路径直接交给服务端下载 → FILE_DOWNLOAD_FAILED，兼容模式 404 不支持）；255.7s 音频实测 12s 转完；
+4. **覆盖守卫**：返回的 `original_duration_in_milliseconds` 与音频时长比对，防"只转了前 52 秒"的静默截断；
+5. key 按 `--api-key` → `$DASHSCOPE_API_KEY` → `~/.agentmemory/.env` 的 `OPENAI_API_KEY=` 顺序解析，缺失退出码 2 并说明。
+
+输出 JSON（desc/正文/各阶段耗时/工作目录），并追加一行 TSV 到 `~/.dsh/omnisub-timing.log`。**下面的人工路线仅在脚本不可用时使用**（其中的坑已按 2026-09-29 实测修正）。
 
 ## 步骤
 
@@ -30,18 +48,32 @@ curl -s -A "<iPhone Safari UA>" -b "$(cat ~/.dsh/douyin-cookies.txt)" \
 - `images` 非空 → **图片/轮播分支**（每项 `url_list[0]`）
 - item_list 为空 = cookie 失效，按上面约定换 cookie，禁止继续猜。
 
-### 2a. 视频分支：下载 → 转 wav → 分段 ASR
+### 2a. 视频分支：下载 → 提音 MP3 → fun-asr 转写
 
 ```bash
-curl -sL -A "<iPhone Safari UA>" -e "https://www.iesdouyin.com/" -o /tmp/dy_video.mp4 "<play直链>"
-afconvert -f WAVE -d LEI16@16000 -c 1 /tmp/dy_video.mp4 /tmp/dy_audio.wav   # macOS 原生，绕开坏 ffmpeg
+# 【必须带 -b cookie】否则 CDN 返回劣化损坏文件（下载器与 afconvert 都看不出来）
+curl -sL -A "<iPhone Safari UA>" -b "$(cat ~/.dsh/douyin-cookies.txt)" \
+  -e "https://www.iesdouyin.com/" -o /tmp/dy_video.mp4 "<play直链>"
+# 守卫一：<100KB = 直链过期（302 落到错误页），回步骤 1 重取直链
+# 守卫二（时长）：ffprobe 容器时长 vs 分享页 video.duration/1000，差 >2s = 劣化文件 → 换 cookie 重下。
+#   afconvert/ffmpeg 对损坏文件静默"成功"（afconvert 会按索引填静音凑满标称时长），只有 ffprobe 可信。
+/opt/homebrew/bin/ffmpeg -y -v error -i /tmp/dy_video.mp4 -vn -ac 1 -ar 16000 -c:a libmp3lame -b:a 32k /tmp/dy_audio.mp3
 ```
 
-守卫：mp4 < 100KB = 直链过期（302 落到错误页），回步骤 1 重取直链，禁止对坏文件继续转码。
+ASR 一条命令（fun-asr 异步 filetrans，上传内置，长音频不用切片；**必须 MP3**，WAV 实测 SERVER_ERROR）：
 
-ASR 同步模式上限 300 秒：用 python `wave` 按 **280 秒**切片为 /tmp/dy_part%02d.wav（贴上限切，调用数最少）。**并行转写**（主导阶段，并发提速约 3 倍）：每片 `bl ... > /tmp/dy_txt_%02d.txt 2>/dev/null &` 后台启动后 `wait`，按文件名序拼接；空文本片顺序重试一次。**bl 的正文在 stdout、banner 在 stderr**——直接收 stdout，别 sed 删行。
+```bash
+KEY=$(grep -E "^OPENAI_API_KEY=" ~/.agentmemory/.env | head -1 | cut -d= -f2)
+export PATH="$HOME/.local/share/fnm/node-versions/v24.15.0/installation/bin:$PATH"  # bl 是 node shim，极简 PATH 下会 exit=127 静默空返回
+bl speech recognize --url /tmp/dy_audio.mp3 --model fun-asr --language zh \
+  --output text --api-key "$KEY" --out /tmp/dy_asr.json
+```
 
-完成标准：拿到非空转写；纯 BGM 无人声的空文本也是合法结果，如实报告。
+三个已知死路（别再试）：同步模型 `qwen-audio-3.1-asr-flash` 经 bl 传本地文件 = FILE_DOWNLOAD_FAILED（bl 把本地路径当 URL 交服务端下载）；DashScope 兼容模式 404 不支持该模型；原生端点 data URL 报 UNSUPPORTED_FORMAT。**key 不会自动找到**：bl 不带 `--api-key` 报 "No API key found"（exit=3）。
+
+守卫三（覆盖）：`--out` JSON 的 `properties.original_duration_in_milliseconds` 应与音频时长一致（±2s），明显偏小 = 上传被截断，重跑而不是拿残文交差。
+
+完成标准：拿到非空转写且覆盖守卫通过；纯 BGM 无人声的空文本也是合法结果，如实报告。
 
 ### 2b. 图片/轮播分支：下载 → 视觉读图
 

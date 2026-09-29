@@ -39,15 +39,15 @@ engine:
       DSH_BASE_URL: ${DSH_BASE_URL:-https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
       DSH_MODEL: ${model_name}
       # 绝对路径：被测宿主 PATH 可能极简，按名找不到二进制
-      DSH_BIN: ${SKILLUP_DSH_BIN:-/path/to/skill-up-dsh/dsh}
+      DSH_BIN: ${SKILLUP_DSH_BIN:-/Users/yangzhuo/.local/share/skill-up-dsh/dsh}
       DSH_SKILLS_DIR: ${workspace}/.dsh-skills
       DSH_TELEMETRY_MODE: DISABLED
       DSH_PERMISSION_MODE: danger-full-access
     local:
-      # Python 3.12+；用绝对路径
-      command: ${SKILLUP_PYTHON:-python3.12}
+      # Python 3.12+；用绝对路径（uv 托管 3.12.9 在 ~/.local/bin/python3）
+      command: ${SKILLUP_PYTHON:-/Users/yangzhuo/.local/bin/python3}
       args:
-        - ${SKILLUP_DIR:-/path/to/skill-up-dsh}/dsh_runner.py
+        - ${SKILLUP_DIR:-/Users/yangzhuo/.local/share/skill-up-dsh}/dsh_runner.py
         - --input
         - ${input_file}
         - --output
@@ -64,6 +64,7 @@ cases:
     - evals/cases/video-embedded-subtitle-reuse.yaml
     - evals/cases/video-source-artifact-guard.yaml
     - evals/cases/video-bilingual-ass-contract.yaml
+    - evals/cases/douyin-degraded-download-guard.yaml
   defaults:
     timeout_seconds: 600
     max_turns: 8
