@@ -1,6 +1,6 @@
 ---
 name: omnisub
-description: 视频/图片转文字与字幕入口。抖音链接（v.douyin.com 或 www.douyin.com）要求提取内容/转文字/识别图片文字时使用；本地视频文件（含 MKV）要求转写、出字幕、要时间轴、要双语/中英字幕、或指定语言字幕时同样使用。覆盖三条分支：抖音有声视频→固化的 douyin2txt.py（分享页解析 + cookie 下载 + 劣化文件守卫 + fun-asr 转写）；单图或轮播图→下载图片后视觉读图；本地视频文件→**任意源语言**转**任意语言对**的双语带样式 ASS 字幕（默认 en,zh；译文在上、原文沉底：中文片英上中下、英文片中上英下）。
+description: 视频/图片转文字与字幕入口。抖音链接（v.douyin.com 或 www.douyin.com）要求提取内容/转文字/识别图片文字时使用；本地视频文件（含 MKV）要求转写、出字幕、要时间轴、要双语/中英字幕、或指定语言字幕时同样使用。覆盖三条分支：抖音有声视频→固化的 douyin2txt.py（分享页解析 + cookie 下载 + 劣化文件守卫 + qwen-audio-3.1-asr-flash-filetrans 转写）；单图或轮播图→下载图片后视觉读图；本地视频文件→**任意源语言**转**任意语言对**的双语带样式 ASS 字幕（默认 en,zh；译文在上、原文沉底：中文片英上中下、英文片中上英下）。
 ---
 
 # omnisub：视频 / 图片 → 文字与字幕
@@ -14,7 +14,7 @@ cookie 依赖：分享页 SSR 需要登录态 cookie 才内嵌视频数据；**C
 ## 首选入口：固化脚本一条命令（2026-09-29 固化）
 
 ```bash
-# 抖音链接 → 文字（cookie 下载、劣化文件守卫、fun-asr 转写、覆盖守卫、计时全内置）
+# 抖音链接 → 文字（cookie 下载、劣化文件守卫、ASR 转写、覆盖守卫、计时全内置）
 python3 <skill根>/scripts/douyin2txt.py "<分享链接>"
 python3 <skill根>/scripts/douyin2txt.py "<链接>" --out /tmp/dy_transcript.txt
 python3 <skill根>/scripts/douyin2txt.py "<链接>" --images   # 图片/轮播帖：只下载图片并打印路径
@@ -23,7 +23,7 @@ python3 <skill根>/scripts/douyin2txt.py "<链接>" --images   # 图片/轮播�
 脚本固化的守卫（都不需要人工判断）：
 1. **下载带 cookie + UA + Referer**（坑：无 cookie 的 CDN 劣化文件，从 HTTP 状态与字节数完全看不出问题）；
 2. **时长守卫**：`ffprobe` 容器时长 vs 分享页元数据 `duration`，差 >2s 判劣化文件并明确报错——**afconvert 对损坏文件会静默按索引填充静音"成功"，ffmpeg 只解出前几十秒也不报错；时长判据只有 ffprobe 可靠**；
-3. **转写走 fun-asr（异步 filetrans）**：上传内置，必须 MP3 32k（WAV 实测 SERVER_ERROR；同步模型 qwen-audio-3.1-asr-flash 在 bl 里会把本地路径直接交给服务端下载 → FILE_DOWNLOAD_FAILED，兼容模式 404 不支持）；255.7s 音频实测 12s 转完；
+3. **转写走 qwen-audio-3.1-asr-flash-filetrans（异步 filetrans）**：上传内置，长音频不用切片；固定提 MP3 32k（覆盖守卫按已知码率反推时长；同步模型 qwen-audio-3.1-asr-flash 在 bl 里会把本地路径直接交给服务端下载 → FILE_DOWNLOAD_FAILED，兼容模式 404 不支持）；2026-10-04 由 fun-asr 换入，6.9s MP3 实测走通、与本地视频分支同模型，同音频费用约 1/7.8（0.00020 元 vs 0.00152 元）；
 4. **覆盖守卫**：返回的 `original_duration_in_milliseconds` 与音频时长比对，防"只转了前 52 秒"的静默截断；
 5. key 按 `--api-key` → `$DASHSCOPE_API_KEY` → `~/.agentmemory/.env` 的 `OPENAI_API_KEY=` 顺序解析，缺失退出码 2 并说明。
 
@@ -48,7 +48,7 @@ curl -s -A "<iPhone Safari UA>" -b "$(cat ~/.dsh/douyin-cookies.txt)" \
 - `images` 非空 → **图片/轮播分支**（每项 `url_list[0]`）
 - item_list 为空 = cookie 失效，按上面约定换 cookie，禁止继续猜。
 
-### 2a. 视频分支：下载 → 提音 MP3 → fun-asr 转写
+### 2a. 视频分支：下载 → 提音 MP3 → ASR 转写
 
 ```bash
 # 【必须带 -b cookie】否则 CDN 返回劣化损坏文件（下载器与 afconvert 都看不出来）
@@ -60,12 +60,12 @@ curl -sL -A "<iPhone Safari UA>" -b "$(cat ~/.dsh/douyin-cookies.txt)" \
 /opt/homebrew/bin/ffmpeg -y -v error -i /tmp/dy_video.mp4 -vn -ac 1 -ar 16000 -c:a libmp3lame -b:a 32k /tmp/dy_audio.mp3
 ```
 
-ASR 一条命令（fun-asr 异步 filetrans，上传内置，长音频不用切片；**必须 MP3**，WAV 实测 SERVER_ERROR）：
+ASR 一条命令（异步 filetrans，上传内置，长音频不用切片；提 MP3 32k 是因为守卫三要按已知码率反推时长，**不是**模型只吃 MP3——2026-10-04 实测本模型 WAV 也能过）：
 
 ```bash
 KEY=$(grep -E "^OPENAI_API_KEY=" ~/.agentmemory/.env | head -1 | cut -d= -f2)
 export PATH="$HOME/.local/share/fnm/node-versions/v24.15.0/installation/bin:$PATH"  # bl 是 node shim，极简 PATH 下会 exit=127 静默空返回
-bl speech recognize --url /tmp/dy_audio.mp3 --model fun-asr --language zh \
+bl speech recognize --url /tmp/dy_audio.mp3 --model qwen-audio-3.1-asr-flash-filetrans --language zh \
   --output text --api-key "$KEY" --out /tmp/dy_asr.json
 ```
 
@@ -589,7 +589,7 @@ qwen3-max **本项目禁用**（用户 2026-09-28 明令）；qwen3.7-flash 不�
 - **`ffmpeg`/`ffprobe` 必须是好的**：本机曾断链（ffprobe 指向已删 Cellar、ffmpeg 缺 libx264），2026-09-27 `brew reinstall ffmpeg` 修好，二者均为 9.0.2（`/opt/homebrew/bin`）。**一律用 ffmpeg/ffprobe，不用 PyAV**。
 - **子进程一律带 PATH（`tool_env()`）**：DSH 里 bash 子进程的 PATH 可能只有 `/usr/bin:/bin:/usr/sbin:/sbin`。ffsubsync 这类工具**内部按名字调 `ffmpeg`**，不前置 `/opt/homebrew/bin` 就会 `exit=1` 静默空转（实测：同步校验变成"校验未完成，保持原字幕"）。脚本已统一走 `tool_env()`（前置 ffmpeg/uv/node/bl 目录），失败时还会打印真实 stderr。
 - **`bl` 是 npm shim（`#!/usr/bin/env node`）**：PATH 里没有 node 时它以 exit=127 **静默空返回**（症状：整批翻译返回 0 条却无报错）。脚本用 `bl_env()` 把 bl 所在目录前置进子进程 PATH。
-- **同步 ASR 上限 300 秒**；要整片一次过且要时间戳，用异步模型（`*-filetrans`/`fun-asr`/`paraformer-*`）配 `--out <json>`。`bl speech` **没有翻译子命令**。
+- **同步 ASR 上限 300 秒**；要整片一次过且要时间戳，用异步模型（统一用 `*-filetrans`；`fun-asr`/`paraformer-*` 同样可用但本 skill 已不选，fun-asr 实测同音频贵约 7.8 倍）配 `--out <json>`。`bl speech` **没有翻译子命令**。
 - **`bl text chat --output json` 可能直接输出模型正文（JSON 数组）**；`qwen-mt-*` 系列**不接受 system 角色**（报 `Role must be in [user, assistant]`）——脚本对三种返回形态都做了兼容。
 - **`bl text chat` 默认超时偏短**：并发下会 `ETIMEDOUT`，必须 `--timeout 180`；单批失败重试 3 次，仍失败二分（末尾补空会让整批译错位）。
 - **模型下线**：`qwen-mt-turbo`、`gummy-chat-v1`、`gummy-realtime-v1` 于 **2026-10-10** 下线（目录字段 `upcomingOfflineAt`，公告 [aliyun.com/notice/118434](https://www.aliyun.com/notice/118434)）；替代见 `ASR-API.md`。

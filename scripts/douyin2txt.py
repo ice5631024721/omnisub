@@ -2,7 +2,7 @@
 """douyin2txt.py — 抖音链接 → 文字（omnisub 抖音分支的固化实现）
 
 一条命令完成：triage → 分享页解析 → 下载（必须带 cookie）→ 劣化文件守卫
-→ 提音 MP3 → fun-asr 转写 → 覆盖守卫 → 汇总输出。
+→ 提音 MP3 → ASR 转写 → 覆盖守卫 → 汇总输出。
 
 2026-09-29 实测踩坑固化（四个都真实发生过）：
   1. 【下载必须带 cookie】无 cookie 时 CDN 返回劣化损坏文件：HTTP 200、
@@ -12,8 +12,11 @@
      标称时长，不报任何错——时长判据只有 ffprobe 可靠。
   3. 【bl 同步 ASR 模型不能传本地文件】qwen-audio-3.1-asr-flash 走 bl 会把
      本地路径直接交给服务端下载 → FILE_DOWNLOAD_FAILED；DashScope 兼容模式
-     不支持该模型（404）。可用路线是异步 filetrans（fun-asr）：上传内置，
-     实测 255.7s 音频 12s 转写成功。必须 MP3 32k——传 WAV 会 SERVER_ERROR。
+     不支持该模型（404）。可用路线是异步 filetrans：上传内置。
+     2026-10-04 起本分支与本地视频分支统一为 qwen-audio-3.1-asr-flash-filetrans
+     （原为 fun-asr，同音频实测费用约 7.8 倍：6.9s 音频 0.00152 元 vs 0.00020 元）。
+     仍固定提 MP3 32k——同日实测该模型 WAV 也能过，但覆盖守卫用
+     `文件大小 × 8 ÷ 32` 反推时长、依赖已知码率，换 WAV 会把守卫算废。
   4. 【key 不会自动找到】bl 报 "No API key found"：key 必须显式传入
      （--api-key / DASHSCOPE_API_KEY / ~/.agentmemory/.env 的 OPENAI_API_KEY=）。
 
@@ -47,6 +50,9 @@ TIMING_LOG = Path.home() / ".dsh" / "omnisub-timing.log"
 # 容器时长与分享页元数据的容差（秒）；超过即判劣化文件
 DURATION_TOLERANCE_S = 2.0
 TMP_PREFIX = "dy2t_"
+# 异步 filetrans 模型（上传内置、长音频整片直送）。与 omnisub.py 的
+# ASR_MODEL_DEFAULT 同名，2026-10-04 由 fun-asr 统一过来。改动请连带 SKILL.md。
+ASR_MODEL = "qwen-audio-3.1-asr-flash-filetrans"
 
 FNM_GLOB = os.path.join(
     os.path.expanduser("~"), ".local/share/fnm/node-versions/*/installation/bin"
@@ -207,8 +213,12 @@ def resolve_api_key(cli_key: str | None) -> str:
     )
 
 
-def asr_fun_asr(mp3: Path, key: str, asr_json_out: Path) -> str:
-    """异步 filetrans（fun-asr）：上传内置；必须 MP3（WAV 实测 SERVER_ERROR）。"""
+def asr_transcribe(mp3: Path, key: str, asr_json_out: Path) -> str:
+    """异步 filetrans（qwen-audio-3.1-asr-flash-filetrans）：上传内置，长音频整片直送。
+
+    2026-10-04 由 fun-asr 换入，与本地视频分支统一。实测 6.9s MP3 32k 走通，
+    返回带 properties.original_duration_in_milliseconds（覆盖守卫要用）。
+    """
     bl = find_tool("bl")
     p = run(
         [
@@ -218,7 +228,7 @@ def asr_fun_asr(mp3: Path, key: str, asr_json_out: Path) -> str:
             "--url",
             str(mp3),
             "--model",
-            "fun-asr",
+            ASR_MODEL,
             "--language",
             "zh",
             "--output",
@@ -232,7 +242,7 @@ def asr_fun_asr(mp3: Path, key: str, asr_json_out: Path) -> str:
         timeout=600,
     )
     if p.returncode != 0:
-        die(f"fun-asr 转写失败：{p.stderr[-400:]}")
+        die(f"ASR 转写失败（{ASR_MODEL}）：{p.stderr[-400:]}")
     if not asr_json_out.exists():
         die("bl 未产出 --out JSON")
     d = json.loads(asr_json_out.read_text(encoding="utf-8"))
@@ -327,7 +337,7 @@ def main() -> None:
     _p = time.time()
     key = resolve_api_key(args.api_key)
     asr_json = work / "asr.json"
-    text = asr_fun_asr(mp3, key, asr_json)
+    text = asr_transcribe(mp3, key, asr_json)
     t["asr"] = time.time() - _p
 
     total = time.time() - t0

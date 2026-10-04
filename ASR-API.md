@@ -54,7 +54,7 @@ curl -s -X POST https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcri
 
 ## 整片带时间戳转写（字幕用，2026-09-27 实测）
 
-要时间轴就别走同步模式：**异步模型**（`*-filetrans` / `fun-asr` / `paraformer-*`）接受整片音频，并可用 `--out` 落 JSON。
+要时间轴就别走同步模式：**异步模型**（`*-filetrans` / `fun-asr` / `paraformer-*`）接受整片音频，并可用 `--out` 落 JSON。**本 skill 两条分支（抖音 / 本地视频）统一走 `qwen-audio-3.1-asr-flash-filetrans`**——2026-10-04 抖音分支由 fun-asr 换入，理由见下。
 
 ```bash
 bl speech recognize --url /tmp/e02_16k.flac \
@@ -126,9 +126,23 @@ bl text chat --model qwen-mt-flash --messages-file /tmp/msg.json \
 |---|---|---|---|
 | **qwen-audio-3.1-asr-flash-filetrans**（默认 ASR） | 识别，**带句级+词级时间戳** | 0.8 / 2.7 元/百万 token | 整片异步，实测 43.8 分钟音频 62 秒返回；一集 ≈0.08 元 |
 | qwen-audio-3.0-asr | 识别 | 0.00022 元/秒 | 无时间戳需求时更省 |
+| ~~fun-asr~~（2026-10-04 起本 skill 不再用） | 识别，热词 | 0.00022 元/秒 | 与 filetrans 同为异步任务档，时间戳/说话人分离/敏感词过滤能力相同；**贵约 7.8 倍**（见下） |
 | qwen3.8-omni-flash | 全模态理解＋**可直接英音→中文** | 0.8 / 2.7 元/百万 token | `bl omni --audio x.wav --text-only --message "翻译成中文"`；**无时间戳，不能做字幕轴** |
 | ~~gummy-chat-v1 / gummy-realtime-v1~~ | 语音识别及翻译 | 0.00015 元/秒 | **2026-10-10 下线** |
 | qwen3-livetranslate-flash 系列 | 直播/实时翻译 | 音频 10～40 元/百万 token | 实时/流式接口，`bl speech recognize` 调不通 |
+
+#### fun-asr vs filetrans 为什么弃用前者（2026-10-04 同音频 A/B 实测）
+
+同一段 6.92s MP3 32k，两模型走同一条 `bl speech recognize` 命令：
+
+| | usage | 实付 | 耗时 | 识别文本 |
+|---|---|---|---|---|
+| `fun-asr` | `{}`（按秒计费，不回 token） | 6.9247s × 0.00022 = **0.001523 元** | 3.4s | 一致 |
+| `qwen-audio-3.1-asr-flash-filetrans` | `input 188 / output 17` token | 188/1e6×0.8 + 17/1e6×2.7 = **0.000196 元** | 3.1s | 一致 |
+
+≈ **7.8 倍**。附带发现：**本模型 WAV 也能过**（fun-asr 时代"WAV 必 SERVER_ERROR"的约束不适用于它），但抖音分支仍固定提 MP3 32k——覆盖守卫靠 `文件大小 × 8 ÷ 32` 反推时长，换 WAV 会把守卫算废。
+
+未验证项：以上文本一致性是**干净 TTS 语音**上的结果，**不等于**抖音实拍（噪声/BGM/口播）的准确率一致；fun-asr 官方主打噪声鲁棒性，若日后抖音转写质量下降，这是第一个该回滚的点。
 
 ### 怎么查某个模型是否要下线
 
