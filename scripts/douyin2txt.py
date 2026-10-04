@@ -39,6 +39,7 @@ import tempfile
 import time
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 IPHONE_UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
@@ -53,6 +54,37 @@ TMP_PREFIX = "dy2t_"
 # 异步 filetrans 模型（上传内置、长音频整片直送）。与 omnisub.py 的
 # ASR_MODEL_DEFAULT 同名，2026-10-04 由 fun-asr 统一过来。改动请连带 SKILL.md。
 ASR_MODEL = "qwen-audio-3.1-asr-flash-filetrans"
+
+# ---- cookie 发送范围白名单（2026-10-04 安全审计 F2）----
+# 为什么要有：play_addr / images 的 URL 取自**远端页面内容**，而下载时会把用户的抖音
+# session cookie 一起发过去。以前"cookie 只发给抖音自己的域"这条不变量只靠上游行为维持、
+# 代码里没钉——将来换分享 host、加跳转或上游返回第三方 URL，都会静默变成凭据外泄。
+# 现在把它钉在代码里：不在名单内就**明确报错**，绝不静默降级成"不带 cookie 试一下"
+# （那只会得到一个劣化文件，然后被时长守卫报成一句看不懂的"疑似劣化文件"）。
+COOKIE_HOST_SUFFIXES = (
+    "iesdouyin.com",     # 分享页本身
+    "douyin.com",
+    "douyinvod.com",
+    "douyinpic.com",
+    "snssdk.com",        # 实测：play_addr 实际落在这里（aweme.snssdk.com，2026-10-04 取自
+    #                      本机当日 3 个不同 aweme_id 的真实分享页响应，三者一致）
+    "amemv.com",
+    "byteimg.com",
+    "bytecdn.cn",
+    "zjcdn.com",
+)
+
+
+def cookie_host_allowed(url: str) -> bool:
+    """host 是否在 cookie 白名单内。
+
+    边界必须写成「完全相等 或 以 '.'+域名 结尾」：直接 endswith("snssdk.com") 会放过
+    evil-snssdk.com 与 snssdk.com.attacker.com 这两类仿冒（下面 selftest 有对应用例）。
+    """
+    host = (urlparse(url).hostname or "").lower().rstrip(".")
+    if not host:
+        return False
+    return any(host == d or host.endswith("." + d) for d in COOKIE_HOST_SUFFIXES)
 
 FNM_GLOB = os.path.join(
     os.path.expanduser("~"), ".local/share/fnm/node-versions/*/installation/bin"
@@ -107,6 +139,15 @@ def tool_env() -> dict:
 
 
 def http_get(url: str, *, cookie: str = "", referer: str = "", binary: bool = False):
+    # cookie 发送范围的**唯一收口点**：调用方不需要各自记得判断，将来新增调用点也不会漏。
+    if cookie and not cookie_host_allowed(url):
+        die(
+            f"拒绝把 cookie 发往非白名单域：{urlparse(url).hostname or url!r}。"
+            f"当前白名单 COOKIE_HOST_SUFFIXES = {COOKIE_HOST_SUFFIXES}，"
+            "定义在 scripts/douyin2txt.py 顶部。抖音若启用了新 CDN 域，"
+            "确认该域确属抖音所有后再加进去——这是有意卡住的，别绕过。",
+            code=2,
+        )
     req = urllib.request.Request(url, headers={"User-Agent": IPHONE_UA})
     if cookie:
         req.add_header("Cookie", cookie)

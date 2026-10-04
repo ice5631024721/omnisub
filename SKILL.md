@@ -26,6 +26,7 @@ python3 <skill根>/scripts/douyin2txt.py "<链接>" --images   # 图片/轮播�
 3. **转写走 qwen-audio-3.1-asr-flash-filetrans（异步 filetrans）**：上传内置，长音频不用切片；固定提 MP3 32k（覆盖守卫按已知码率反推时长；同步模型 qwen-audio-3.1-asr-flash 在 bl 里会把本地路径直接交给服务端下载 → FILE_DOWNLOAD_FAILED，兼容模式 404 不支持）；2026-10-04 由 fun-asr 换入，6.9s MP3 实测走通、与本地视频分支同模型，同音频费用约 1/7.8（0.00020 元 vs 0.00152 元）；
 4. **覆盖守卫**：返回的 `original_duration_in_milliseconds` 与音频时长比对，防"只转了前 52 秒"的静默截断；
 5. key 按 `--api-key` → `$DASHSCOPE_API_KEY` → `~/.agentmemory/.env` 的 `OPENAI_API_KEY=` 顺序解析，缺失退出码 2 并说明。
+6. **cookie 白名单（2026-10-04 安全审计 F2）**：`play_addr` / `images` 的 URL 取自**远端页面内容**，下载时会把用户 session cookie 一起发过去。发之前先过 `COOKIE_HOST_SUFFIXES`（实测 play_addr 实际落在 `aweme.snssdk.com`）；**越界域退出码 2 明确报错**，绝不静默降级成"不带 cookie 试试"——那只会拿到劣化文件，再被时长守卫报成一句看不懂的"疑似劣化文件"。判定必须是"host 完全相等 **或** 以 `.`+域名 结尾"，直接 `endswith` 会放过 `evil-snssdk.com`。收口点在 `http_get()` 内部，将来新增调用点不会漏。
 
 输出 JSON（desc/正文/各阶段耗时/工作目录），并追加一行 TSV 到 `~/.dsh/omnisub-timing.log`。**下面的人工路线仅在脚本不可用时使用**（其中的坑已按 2026-09-29 实测修正）。
 
