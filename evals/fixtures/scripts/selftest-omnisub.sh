@@ -67,12 +67,12 @@ bad() { fail=$((fail+1)); echo "  ❌ $1"; }
 
 check_guard() {   # $1=目录 $2=场景名：成品必须来自 ASR JSON，中间产物必须落在缓存目录
   local d=$1 tag=$2 origin
-  grep -q FROM_ASR_JSON_ALPHA "$d/sample.ass" 2>/dev/null && ok "$tag：成品来自 ASR JSON" || bad "$tag：成品不是 ASR JSON"
-  grep -q STALE_SOURCE_MARKER "$d/sample.ass" 2>/dev/null && bad "$tag：被自家 .source.srt 劫持（STALE 进了成品）" || ok "$tag：未被自家产物劫持"
+  grep -q FROM_ASR_JSON_ALPHA "$d/sample.ass" 2>/dev/null && ok "\${tag}：成品来自 ASR JSON" || bad "\${tag}：成品不是 ASR JSON"
+  grep -q STALE_SOURCE_MARKER "$d/sample.ass" 2>/dev/null && bad "\${tag}：被自家 .source.srt 劫持（STALE 进了成品）" || ok "\${tag}：未被自家产物劫持"
   origin=$(cd "$d" && $PY -c 'import json;print(json.load(open(".cache/sample.source.json")).get("origin",""))' 2>/dev/null)
   case "$origin" in
-    "ASR 转写"*) ok "$tag：缓存里的 origin=$origin" ;;
-    *)           bad "$tag：缓存里的 origin=$origin（期望 ASR 转写；没落到 --cache-dir 也算失败）" ;;
+    "ASR 转写"*) ok "\${tag}：缓存里的 origin=$origin" ;;
+    *)           bad "\${tag}：缓存里的 origin=\${origin}（期望 ASR 转写；没落到 --cache-dir 也算失败）" ;;
   esac
 }
 
@@ -95,7 +95,7 @@ cat > "$TMP/s3/one.json" <<'JSON'
 JSON
 out=$(cd "$TMP/s3" && $PY "$SCRIPT" sample.mkv --refresh-source --asr-json one.json --no-translate --no-log --cache-dir .cache 2>&1)
 rc=$?
-if [ "$rc" -eq 0 ] && ! grep -q Traceback <<<"$out"; then ok "场景 3：单条 cue 正常退出"; else bad "场景 3：崩溃或被 Traceback 打断（exit=$rc）"; fi
+if [ "$rc" -eq 0 ] && ! grep -q Traceback <<<"$out"; then ok "场景 3：单条 cue 正常退出"; else bad "场景 3：崩溃或被 Traceback 打断（exit=\${rc}）"; fi
 grep -q SINGLE_CUE_ONLY "$TMP/s3/sample.ass" 2>/dev/null && ok "场景 3：产出 1 条字幕" || bad "场景 3：没产出字幕"
 
 echo "== 场景 4：默认缓存时，视频目录只许多出一个 .ass（中间产物不许留在片库）=="
@@ -105,7 +105,7 @@ d=$TMP/s4; rm -rf "$d"; mkdir -p "$d/home" "$d/video"; cp "$MKV_EMB" "$d/video/s
 leaked=$(cd "$d/video" && ls -A | grep -v -E '^(sample\.mkv|sample\.ass)$' || true)
 [ -z "$leaked" ] && ok "场景 4：视频目录只有 原视频 + sample.ass" || bad "场景 4：视频目录多了：$(echo "$leaked" | tr '\n' ' ')"
 cached=$(cd "$d/home" && find . -name "sample.source.srt" | head -1)
-[ -n "$cached" ] && ok "场景 4：中间产物落在默认缓存目录（$cached）" || bad "场景 4：默认缓存目录里没有中间产物"
+[ -n "$cached" ] && ok "场景 4：中间产物落在默认缓存目录（\${cached}）" || bad "场景 4：默认缓存目录里没有中间产物"
 
 echo "== 场景 5：源语言判定与语言对（任意语言的入口）=="
 d=$TMP/s5; rm -rf "$d"; mkdir -p "$d"; cp "$MKV" "$d/sample.mkv"
@@ -201,12 +201,12 @@ run_case() {   # $1=缓存的译文文件名  $2=输出目录名
   echo $?
 }
 rc=$(run_case aligned.zh.json o_ok)
-[ "$rc" = "0" ] && ok "场景 8 对照：对齐缓存 → 闸门通过（退出 0）" || bad "场景 8 对照：对齐缓存被判失败（rc=$rc）"
+[ "$rc" = "0" ] && ok "场景 8 对照：对齐缓存 → 闸门通过（退出 0）" || bad "场景 8 对照：对齐缓存被判失败（rc=\${rc}）"
 [ -f "$d/o_ok/sample.ass" ] && ok "场景 8 对照：成品已写出" || bad "场景 8 对照：没写出成品"
 grep -q "复用译文缓存" "$d/o_ok.log" && ok "场景 8 对照：夹具译文缓存被复用（零网络）" \
   || bad "场景 8 对照：夹具缓存没被复用（脚本自己联网重译了，这一场就不是零网络闸门了）"
 rc=$(run_case shifted.zh.json o_bad)
-[ "$rc" != "0" ] && ok "场景 8 污染：闸门判失败并拒写（退出 $rc）" || bad "场景 8 污染：**平移污染被放过**（退出 0）"
+[ "$rc" != "0" ] && ok "场景 8 污染：闸门判失败并拒写（退出 \${rc}）" || bad "场景 8 污染：**平移污染被放过**（退出 0）"
 grep -qE "长度平移段|单元收口错位 [1-9]" "$d/o_bad.log" && ok "场景 8 污染：日志给出错位证据" || bad "场景 8 污染：日志没有错位证据"
 [ -f "$d/o_bad/sample.ass" ] && bad "场景 8 污染：**写出了坏成品**" || ok "场景 8 污染：未写成品（盘上保留上一版）"
 grep -q "复用译文缓存" "$d/o_bad.log" && ok "场景 8 污染：夹具译文缓存被复用（零网络，未偷偷重译）" \
@@ -221,11 +221,11 @@ deg() {   # $1=标签 $2=asr 文件名
   local tag=$1 f=$2 out rc
   out=$(cd "$d" && $PY "$SCRIPT" sample.mkv --asr-json "$f" --no-translate --no-log --cache-dir .c 2>&1)
   rc=$?
-  [ "$rc" != "0" ] && ok "场景 9 $tag：非零退出（rc=$rc）" || bad "场景 9 $tag：**退化输入被当成成功**"
+  [ "$rc" != "0" ] && ok "场景 9 \${tag}：非零退出（rc=\${rc}）" || bad "场景 9 \${tag}：**退化输入被当成成功**"
   if grep -qi "traceback" <<<"$out"; then
-    bad "场景 9 $tag：**甩了 Python 栈**（应给明确报错）"
+    bad "场景 9 \${tag}：**甩了 Python 栈**（应给明确报错）"
   else
-    ok "场景 9 $tag：明确报错、未甩栈"
+    ok "场景 9 \${tag}：明确报错、未甩栈"
   fi
 }
 deg "截断 JSON" trunc.asr.json
@@ -243,7 +243,7 @@ if [ -d "$TMP/s8" ] && [ -f "$TMP/s8/shifted.zh.json" ]; then
   out=$(cd "$e" && $PY "$SCRIPT" sample.mkv --asr-json big.asr.json --source-lang en \
       --no-repair-desync --allow-desync --no-log --cache-dir .cache --out o 2>&1)
   rc=$?
-  [ "$rc" = "0" ] && ok "场景 9 --allow-desync：强制交付成功（rc=0）" || bad "场景 9 --allow-desync：逃生舱失效（rc=$rc）"
+  [ "$rc" = "0" ] && ok "场景 9 --allow-desync：强制交付成功（rc=0）" || bad "场景 9 --allow-desync：逃生舱失效（rc=\${rc}）"
   [ -f "$e/o/sample.ass" ] && ok "场景 9 --allow-desync：成品已写出" || bad "场景 9 --allow-desync：没写成品"
   grep -q "整体错位" <<<"$out" && ok "场景 9 --allow-desync：日志仍如实报告错位" || bad "场景 9 --allow-desync：交付时没报告错位"
 else
@@ -270,7 +270,7 @@ echo "== 场景 11：--doctor 不得假绿（坏 key 必须判不可用）=="
 d=$TMP/s11; rm -rf "$d"; mkdir -p "$d"
 out=$(cd "$d" && $PY "$SCRIPT" --doctor --api-key sk-definitely-invalid-key 2>&1)
 rc=$?
-[ "$rc" != "0" ] && ok "场景 11：坏 key 时 doctor 非零退出（rc=$rc）" || bad "场景 11：**坏 key 却报环境可用**（假绿）"
+[ "$rc" != "0" ] && ok "场景 11：坏 key 时 doctor 非零退出（rc=\${rc}）" || bad "场景 11：**坏 key 却报环境可用**（假绿）"
 grep -q "环境可用" <<<"$out" && bad "场景 11：坏 key 仍打「✅ 环境可用」" || ok "场景 11：坏 key 不打「环境可用」"
 grep -qE "实测失败|无法探测" <<<"$out" && ok "场景 11：doctor 给出「实测失败」这一层结论（不是只看 key 在不在）" \
   || bad "场景 11：doctor 没有模型实测这一层（旧版只查 key 存在 → 实际调用被服务端拒绝也报绿）"
@@ -279,7 +279,7 @@ echo "== 场景 12：--install 必须整树同步（清单式安装会静默过�
 d=$TMP/s12; rm -rf "$d"; mkdir -p "$d"
 out=$(cd "$d" && $PY "$SCRIPT" --install --dest "$d/skill" 2>&1)
 rc=$?
-[ "$rc" = "0" ] && ok "场景 12：--install 正常退出" || bad "场景 12：--install 失败（rc=$rc）"
+[ "$rc" = "0" ] && ok "场景 12：--install 正常退出" || bad "场景 12：--install 失败（rc=\${rc}）"
 verdict=$($PY - "$ROOT" "$d/skill" <<'PYCHK'
 # 源目录里每个"受管文件"都必须在安装树里且内容一致。
 # 旧版按写死的清单拷（不含 evals/）→ 安装树里的 evals/ 停在旧版：缺评测超时修复、

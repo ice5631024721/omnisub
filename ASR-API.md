@@ -69,6 +69,11 @@ bl speech recognize --url /tmp/e02_16k.flac \
 
 ## 翻译：bl text chat（字幕双语化用）
 
+> **`qwen-mt-*` 已于 2026-10-04 撤出可选项**（用户令），下面这段 `bl text chat` 的用法随之归档。
+> 现在唯一的云端翻译路径是**直连 dashscope HTTP + 显式 `enable_thinking:false`**
+> （`qwen3.7-flash`），见「纯文本翻译」。保留此节是因为 `_ask_cloud` 里的 bl 传输分支仍在
+> （供非 qwen3 前缀的模型走），且下面几条踩坑对那条路径依然成立。
+
 ```bash
 bl text chat --model qwen-mt-flash --messages-file /tmp/msg.json \
   --api-key "$KEY" --output json --quiet
@@ -87,10 +92,8 @@ bl text chat --model qwen-mt-flash --messages-file /tmp/msg.json \
 | 模型 | 输入 | 输出 | 30 条实测墙钟 | 上下文 | 限流（北京） | 备注 |
 |---|---|---|---|---|---|---|
 | **qwen3.7-flash**（默认） | 0.2 元/百万 token | 0.4 | **7.5 s**（关思考） | — | 未压测（限速器仍按 50 RPM） | 通用指令模型；**必须直连 HTTP 显式 `enable_thinking:false`**（见下）；token-plan 无此模型（404 实测），走 dashscope 按量流量，key 仍是 `~/.agentmemory/.env` 那把 |
-| **qwen-mt-flash**（可选） | 0.7 元/百万 token | 1.95 | **2.69 s** | 输入/输出各 8192，ctx 16384 | RPM 60 / **TPM 35,000** | MT 专用模型；对"透明型习语"字面直译且风格指令无效（见下），`--chat-model qwen-mt-flash` 仍可用 |
-| qwen-mt-lite | 0.6 | 1.6 | 1 s | 同左 | 同 flash 量级 | 输出会套 ```json 围栏、说话人标签保留英文 |
-| qwen-mt-plus | 1.8 | 5.4 | **3.92 s** | **同 flash（无差别）** | RPM 60 / **TPM 25,000** | 官方定位"旗舰级"，flash 是"轻量级" |
-| qwen-mt-uni | 文本 65 / 文档 20 / 图片 32 / 音频 400 元/百万 | 同左 | — | — | — | 多模态统一翻译 |
+| ~~qwen-mt-flash~~（**2026-10-04 已撤出**） | 0.7 元/百万 token | 1.95 | 2.69 s | 输入/输出各 8192，ctx 16384 | RPM 60 / **TPM 35,000** | MT 专用模型；对"透明型习语"字面直译且风格指令无效（见下）。**`--chat-model qwen-mt-*` 现在会被直接拒绝**，此行只存档弃用理由 |
+| ~~qwen-mt-lite~~ / ~~qwen-mt-plus~~ / ~~qwen-mt-uni~~ | 同左存档 | | | | | 同属已撤出的一系；输出形态/价格差异见历史版本，**不再作为候选** |
 | ~~qwen-mt-turbo~~ | 0.7 | 1.95 | 1 s | — | — | **2026-10-10 下线** |
 
 **为什么默认换 qwen3.7-flash（2026-09-28 定版，用户确认；qwen3-max 本项目禁用）**：

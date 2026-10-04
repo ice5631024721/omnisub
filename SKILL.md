@@ -133,10 +133,12 @@ curl 逐张下载 `images[i].url_list[0]` 到 /tmp/dy_img_N.jpeg，用 read_imag
 | 3 | **ASR 转写** | `ffmpeg -vn -ac 1 -ar 16000 -c:a libmp3lame -b:a 32k` 抽音轨（**有损 32k**，非无损） → `bl speech recognize` 异步 filetrans（句级 `begin_time/end_time` ＋ 词级 `words[]`）→ 按字幕规范切 cue |
 
 拿到原文后翻译：**默认云端 `qwen3.7-flash`**（直连 dashscope HTTP + 显式 `enable_thinking:false`，
-走 API 按量流量；换它的根因与实测见 ASR-API.md「纯文本翻译」——qwen-mt 对透明型习语只会直译且不可修）；
-`--chat-model qwen-mt-flash` 可切回 MT 专用模型（走 `bl text chat`），`--backend local` 切本地
-llama.cpp / mlx-lm 的 OpenAI 兼容服务。两类云端模型都走编号标记协议，非 qwen-mt 模型的提示词
-额外带风格指令（习语意译、禁止逐字直译）。
+走 API 按量流量；换它的根因与实测见 ASR-API.md「纯文本翻译」）；
+`--backend local` 切本地 llama.cpp / mlx-lm 的 OpenAI 兼容服务。走编号标记协议，
+提示词额外带风格指令（习语意译、禁止逐字直译）。
+
+> **`qwen-mt-*` 已于 2026-10-04 撤出可选项**（用户令）：传 `--chat-model qwen-mt-*` 会被直接拒绝并退出 1。
+> 它对透明型习语只做字面直译，风格指令与原生 domains 全部无效（A/B 证据见 ASR-API.md「纯文本翻译」）。
 
 ### 语言对与行序（这条分支的核心契约）
 
@@ -559,7 +561,7 @@ token-plan 那把都是 `401 Failed to get upload policy`——它们够不到 D
 | 后端 | 模型 | 20 条耗时 | decode | 内存 | 一集(765条) | 质量（中立裁判，位置互换） |
 |---|---|---|---|---|---|---|
 | **云端（默认）** | `qwen3.7-flash`（直连 HTTP 关思考） | — | — | — | **68.3 s / 862 条实测（2026-09-28）≈0.01 元** | 习语意译（「麻烦事一桩接一桩」），qwen-mt 做不到 |
-| 云端（可选） | `qwen-mt-flash`（bl） | **1.8 s** | — | — | ≈70 s / ≈0.03 元 | 更快，但透明型习语字面直译且不可修（风格指令/原生 domains/升 plus 全部无效，实测） |
+| ~~云端~~（**2026-10-04 已撤出**） | ~~`qwen-mt-flash`（bl）~~ | 1.8 s | — | — | ≈70 s / ≈0.03 元 | 更快，但透明型习语字面直译且不可修（风格指令/原生 domains/升 plus 全部无效，实测）。**留此行只为存档当时为何弃用它**，不是可选方案 |
 | 本地 | Hy-MT2-7B GGUF Q4_K_M（llama.cpp） | 13.2 s | 19.95 tok/s | 4.06 GB | ≈5.7–8.4 分 | 与旧云端基本持平（6:6、6:7），术语更准（`(RETCHES)`→「干呕声」） |
 | 本地 | Hy-MT2-7B MLX 8bit | 22.5 s | 12.0 tok/s | 8.26 GB | ≈14 分 | 大致同级（结论受 20 条小样本/裁判差异影响） |
 

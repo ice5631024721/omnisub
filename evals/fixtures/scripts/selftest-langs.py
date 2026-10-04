@@ -88,26 +88,10 @@ def main() -> int:
 
     # ---- 1. 翻译方向必须进请求体 ----
     print("== 1. 方向进请求体（写死方向的老缺陷）==")
-    single = m._cloud_payload(["Hello there."], "qwen-mt-flash", "s", "en", "zh")
-    check(single[0]["content"] == "把下面这句英文翻译成简体中文，只输出译文：\nHello there.",
-          "en→zh 单行提示词与旧版逐字节一致",
-          f"en→zh 单行提示词被改动：{single[0]['content']!r}")
-
-    multi = m._cloud_payload(["a", "b"], "qwen-mt-flash", "s", "en", "zh")
-    check(multi[0]["content"].startswith("把下面每一行英文翻译成简体中文。")
-          and "[[1]] a" in multi[0]["content"] and "[[2]] b" in multi[0]["content"],
-          "en→zh 批量提示词与编号标记协议与旧版一致",
-          f"en→zh 批量提示词异常：{multi[0]['content']!r}")
-
-    zh2en = m._cloud_payload(["你好"], "qwen-mt-flash", "s", "zh", "en")
-    check(zh2en[0]["content"] == "把下面这句简体中文翻译成英文，只输出译文：\n你好",
-          "zh→en 方向正确进请求（旧版这里是写死的英→中）",
-          f"zh→en 方向没进请求：{zh2en[0]['content']!r}")
-
-    ja2zh = m._cloud_payload(["こんにちは", "ありがとう"], "qwen-mt-flash", "s", "ja", "zh")
-    check("日文" in ja2zh[0]["content"] and "简体中文" in ja2zh[0]["content"],
-          "任意语言对：ja→zh 提示词带上日文源与中文目标",
-          f"ja→zh 提示词异常：{ja2zh[0]['content']!r}")
+    # 原先这里另有一组 qwen-mt-flash 的**逐字节**断言。2026-10-04 qwen-mt 整系撤出可选项、
+    # _cloud_payload 里的 qwen-mt 分支随之删除，那组断言钉的就是被删的分支，故一并移除。
+    # 方向覆盖**没有随之丢失**：下面 qwen3.7-flash 那组含 en→zh 单行/批量、zh→en 反向，
+    # 外加从旧块移植过来的 ja→zh 任意语言对——比旧块多一项（它不测风格指令在场）。
 
     # 通用指令模型（默认 qwen3.7-flash）：编号标记协议 + 风格指令。
     # 根因（2026-09-28）：qwen-mt 对"透明型习语"只会字面直译，且风格指令对它无效；
@@ -127,8 +111,13 @@ def main() -> int:
     check("简体中文翻译成英文" in q37_zh2en[0]["content"] and "意译" in q37_zh2en[0]["content"],
           "通用指令模型 zh→en：方向与风格指令同时进请求",
           f"qwen3.7-flash zh→en 提示词异常：{q37_zh2en[0]['content']!r}")
-    check(m._needs_direct_http("qwen3.7-flash") and not m._needs_direct_http("qwen-mt-flash"),
-          "qwen3 系直连 HTTP（bl 发不了关思考字段），qwen-mt 系仍走 bl",
+    # 从被删的 qwen-mt 块移植过来：任意语言对（不只 en/zh）方向也要进请求。
+    q37_ja2zh = m._cloud_payload(["こんにちは", "ありがとう"], "qwen3.7-flash", "s", "ja", "zh")
+    check("日文" in q37_ja2zh[0]["content"] and "简体中文" in q37_ja2zh[0]["content"],
+          "任意语言对：ja→zh 提示词带上日文源与中文目标（防方向只对 en/zh 生效）",
+          f"ja→zh 提示词异常：{q37_ja2zh[0]['content']!r}")
+    check(m._needs_direct_http("qwen3.7-flash") and not m._needs_direct_http("qwen-audio-tts"),
+          "qwen3 系直连 HTTP（bl 发不了关思考字段），其余模型才走 bl 传输",
           "直连 HTTP 的模型路由不对")
 
     sysmsg = m.system_for("zh", "en")

@@ -9,7 +9,7 @@
   1. 内嵌字幕轨（MKV/MP4 的 srt/ass 文本轨，含 SDH）→ ffprobe 探轨 + ffmpeg 抽取，零 ASR 成本
   2. 同目录外挂字幕（<视频基名>.srt / .ass / .vtt）→ 直接复用
   3. 都没有才转写（ASR）→ ffmpeg 抽 16k 单声道 + bl 异步 filetrans 拿句级/词级时间戳
-再翻译：默认云端 bl text chat（qwen-mt-flash），--backend local 可切本地 llama.cpp / mlx-lm
+再翻译：默认云端直连 dashscope（qwen3.7-flash，显式关思考），--backend local 可切本地 llama.cpp / mlx-lm
 的 OpenAI 兼容服务。
 
 为什么出 ASS 而不是 SRT：SubRip 格式**没有任何样式位**，字号/颜色/加粗/描边都无处安放，
@@ -18,12 +18,13 @@
 工具链：ffmpeg / ffprobe（**走 PATH 优先，再按平台兜底**：macOS 常见 /opt/homebrew、Linux /usr/bin、
 Windows C:\\ffmpeg\\bin）、bailian CLI（bl，ASR 与云端翻译；Windows 上是 bl.cmd，过 cmd /c 执行）、
 可选 llama-server（本地翻译）。
-注意：qwen-mt-turbo 与 gummy-* 于 2026-10-10 下线，默认翻译模型取 qwen-mt-flash。
+注意：qwen-mt-turbo 与 gummy-* 于 2026-10-10 下线。qwen-mt-* 整系已于 2026-10-04 撤出
+可选项（用户令），现在只有通用指令模型一条翻译路径。
 
 跑法：
   python omnisub.py <video> [--out <dir>] [--source auto|embedded|sidecar|asr]
       [--source-lang auto|en|zh|ja|ko|fr|…] [--subtitles en,zh] [--sub-index N]
-      [--asr-model ...] [--chat-model qwen-mt-flash] [--backend cloud|local] [--local-server URL]
+      [--asr-model ...] [--chat-model qwen3.7-flash] [--backend cloud|local] [--local-server URL]
       [--asr-json <已有.json>] [--no-translate] [--batch 20] [--workers 4]
       [--refresh-source] [--verify-sync auto|on|off] [--limit N] [--no-log]
       [--cache-dir <中间产物目录>]
@@ -113,7 +114,8 @@ ASR_MODEL_DEFAULT = "qwen-audio-3.1-asr-flash-filetrans"
 # 原生 translation_options.domains / 升 qwen-mt-plus 全部无效（同日 A/B 实测，见 ASR-API.md）。
 # qwen3.7-flash + 风格指令实测意译（「麻烦事一桩接一桩，没完没了」），30 条整批 30/30
 # 标记协议服从、7.5 s/批；0.2/0.4 元每百万 tokens ≈ 0.01 元/集。qwen3-max 本项目禁用（用户令）。
-# qwen-mt-* 仍可用（--chat-model qwen-mt-flash），其提示词与 bl 传输路径逐字节未动。
+# qwen-mt-* 整系已于 2026-10-04 撤出可选项（用户令），传了会被 main() 明确拒绝。
+# 保留这段 A/B 记录是因为它就是"为什么撤"的证据，不是给后人复用的入口。
 CHAT_MODEL_DEFAULT = "qwen3.7-flash"
 LOCAL_SERVER_DEFAULT = "http://127.0.0.1:8080"
 DELIM = "\n|||\n"
@@ -138,7 +140,8 @@ MIN_READABLE_MS = 400
 MIN_GAP_MS = 40
 SOURCE_SUFFIX = ".source"     # 原文缓存：<基名>.source.srt / .source.json（自家中间产物）
 MONO_SUFFIX = ".mono"         # 只出原文时的单语产物：<基名>.mono.ass
-REQUESTS_PER_MIN = 50   # qwen-mt-flash 限额：60 次/分钟 + 3.5 万 token/分钟；留安全余量
+REQUESTS_PER_MIN = 50   # 数字沿用 qwen-mt-flash 时代的实测限额（60 次/分钟 + 3.5 万 token/分钟）留安全余量；
+                        # qwen3.7-flash 的官方限额未重新查证，改模型时这个数要重新确认
 TRANSLATE_BATCH = 30   # 每批条数。实测（E04，279 单元，--no-cache A/B）：20 条/批 18.0–18.5s、
                        # 30 条/批 12.7–13.8s——批量大 → 请求少 → 更快贴到 50 次/分钟限速下限。
                        # 40 条/批的旧结论（"大量触发二分"）是**漏末行标记**造成的，那个毛病已修
@@ -1733,7 +1736,9 @@ def split_translation(text: str, weights: list[int]) -> list[str]:
 
 
 class _RateLimiter:
-    """按"每分钟 N 次"节流。百炼 qwen-mt-flash 限 60 次/分钟，超了就是一串 429 退避（比限速更慢）。"""
+    """按"每分钟 N 次"节流。百炼侧的分钟级限额，超了就是一串 429 退避（比限速更慢）。
+
+    具体配额随模型变：REQUESTS_PER_MIN 的注释记着换模型时要重新确认。"""
 
     def __init__(self, rpm: int) -> None:
         self._interval = 60.0 / max(1, rpm)
@@ -1775,10 +1780,10 @@ def _translate_local(batch: list[str], server: str, timeout: int,
 
 
 def style_note(src: str, tgt: str) -> str:
-    """通用指令模型的风格指令（只拼进非 qwen-mt 分支的 user 消息末尾）。
+    """通用指令模型的风格指令，拼进每条 user 消息末尾。
 
-    这是换模型收益的来源：qwen-mt 系对提示词里的自由文本指令无动于衷（实测加风格指令
-    与不加一字不差），而通用指令模型加了才会把习语意译——
+    这是选通用指令模型而非 MT 专用模型的收益来源：qwen-mt 系对提示词里的自由文本指令
+    无动于衷（实测加风格指令与不加一字不差），而通用指令模型加了才会把习语意译——
     实测（2026-09-28，qwen3.7-flash）"if it's not one thing, it's another" →
     「麻烦事一桩接一桩，没完没了」。方向与语言名进模板，zh→en 等方向同样适用。
     """
@@ -1823,25 +1828,17 @@ def _http_chat(messages: list[dict], key: str, chat_model: str, timeout: int) ->
 
 def _cloud_payload(batch: list[str], chat_model: str, system: str,
                    src_lang: str, tgt_lang: str) -> list[dict]:
-    """构造请求体。qwen-mt-* 只吃 user/assistant（带 system 会 400）。
+    """构造请求体。请求形态是**单条 user 消息**（system 参数不进请求，不引入未测过的变量）。
 
     翻译方向由 src_lang/tgt_lang 决定 —— 旧版把"把英文翻译成简体中文"写死在提示词里，
     于是 --target-lang en 完全失效（拿中文当输入也照样要求译成中文），
     实测产出是"中文原样重复两遍"的假双语。方向必须进提示词，且要与语言对一致。
+    这一条由 selftest-langs.py 钉成闸门，改这里必须重跑它。
     """
     src, tgt = lang_name(src_lang), lang_name(tgt_lang)
-    if chat_model.startswith("qwen-mt"):
-        if len(batch) == 1:
-            return [{"role": "user", "content": f"把下面这句{src}翻译成{tgt}，只输出译文：\n" + batch[0]}]
-        # 编号标记协议：模型偶尔把一句拆成两条（实测 20 条回 23/25 条），二分永远不收敛；
-        # 带 [[n]] 标记就能把拆出来的片段按标记归位，一次请求拿全，不用反复二分。
-        marked = "\n".join(f"[[{i + 1}]] {x}" for i, x in enumerate(batch))
-        return [{"role": "user", "content":
-                 f"把下面每一行{src}翻译成{tgt}。必须原样保留每行开头的编号标记 [[n]]，"
-                 "一个标记对应一条译文，不要合并或拆分编号，**最后一行也要单独给出它的编号**：\n" + marked}]
-    # 通用指令模型（qwen3.7-flash 等）：同样走编号标记协议——下方解析本就按 [[n]] 切片、
-    # 模型无关，实测 30 条整批 30/30 标记、顺序正确（2026-09-28）。
-    # system 参数在这条分支不进请求：实测形态就是单条 user 消息，别引入未测过的变量。
+    # 编号标记协议：模型偶尔把一句拆成两条（实测 20 条回 23/25 条），二分永远不收敛；
+    # 带 [[n]] 标记就能把拆出来的片段按标记归位，一次请求拿全，不用反复二分。
+    # 解析侧本就按 [[n]] 切片、与模型无关，实测 30 条整批 30/30 标记、顺序正确（2026-09-28）。
     note = style_note(src, tgt)
     if len(batch) == 1:
         return [{"role": "user", "content":
@@ -2044,8 +2041,9 @@ def repair_missing(lines: list[str], translations: list[str], key: str, chat_mod
 def system_for(src_lang: str, tgt_lang: str) -> str:
     """翻译系统提示词（translate 与 repair_missing 必须用同一份，否则补译风格会漂）。
 
-    只有非 qwen-mt 模型会真正收到它 —— qwen-mt-* 不吃 system 角色，方向靠 _cloud_payload
-    的用户消息承载。
+    注意：当前云端路径**不发送 system 角色**（请求形态是单条 user 消息，见 _cloud_payload），
+    所以这份文本的实际消费者是本地后端与可能的未来路径。别因为"看着没被用上"就删——
+    translate 与 repair_missing 共用它，是"补译风格不漂"的依据。
     """
     return (f"You are a professional subtitle translator. Translate each {lang_name(src_lang)} line "
             f"into {lang_name(tgt_lang)}. Keep the same order and count. "
@@ -2706,8 +2704,8 @@ def main() -> None:
     ap.add_argument("--asr-model", default=ASR_MODEL_DEFAULT,
                     help=f"ASR 模型（默认 {ASR_MODEL_DEFAULT}）")
     ap.add_argument("--chat-model", default=CHAT_MODEL_DEFAULT,
-                    help=f"翻译模型（默认 {CHAT_MODEL_DEFAULT}，直连 dashscope 并显式关思考；"
-                         "qwen-mt 系仍可用，走 bl 与原提示词；两类都走编号标记协议）")
+                    help=f"翻译模型（默认 {CHAT_MODEL_DEFAULT}，直连 dashscope 并显式关思考）。"
+                         "qwen-mt 系已于 2026-10-04 撤出，选它会被直接拒绝")
     ap.add_argument("--api-key", default=None,
                     help="百炼 key（默认按 ~/.agentmemory/.env 的 OPENAI_API_KEY → DASHSCOPE_API_KEY 顺序找）")
     ap.add_argument("--asr-json", type=Path, default=None, help="复用已有 ASR 结果（跳过解音轨与转写）")
@@ -2736,7 +2734,8 @@ def main() -> None:
                          "8 并发 12.7s、2 并发 17.6s——再往上加收益很小")
     ap.add_argument("--rpm", type=int, default=REQUESTS_PER_MIN, help="每分钟最大请求数（默认 50，官方限额 60）")
     ap.add_argument("--backend", choices=["cloud", "local"], default="cloud",
-                    help="翻译后端：cloud=bl text chat（默认 qwen-mt-flash）；local=本地 OpenAI 兼容服务")
+                    help=f"翻译后端：cloud=直连 dashscope（默认 {CHAT_MODEL_DEFAULT}）；"
+                         "local=本地 OpenAI 兼容服务")
     ap.add_argument("--local-server", default=LOCAL_SERVER_DEFAULT,
                     help="本地后端地址，如 llama-server --port 8080 或 mlx_lm.server")
     ap.add_argument("--timeout", type=int, default=TRANSLATE_TIMEOUT, help="单次 bl 调用超时秒数（默认 180）")
@@ -2762,6 +2761,17 @@ def main() -> None:
         raise SystemExit(doctor(args.asr_model, args.chat_model))
     if args.video is None:
         ap.error("缺少视频路径（或改用 --install / --doctor）")
+
+    # qwen-mt-* 已于 2026-10-04 撤出可选项（用户令）。留着它不是"多一个选择"：
+    # 它对透明型习语只做字面直译，风格指令与原生 domains 全部无效（ASR-API.md 有 A/B 证据），
+    # 走下面的通用路径必然 400（它不吃 enable_thinking、不接受 system 角色）。
+    # 明确拒，别让它跑到网络层才炸出一个看不懂的报错。
+    if args.chat_model.startswith("qwen-mt"):
+        raise SystemExit(
+            f"--chat-model {args.chat_model}：qwen-mt 系已于 2026-10-04 撤出，不再是可选翻译模型。"
+            f"翻译模型固定用 {CHAT_MODEL_DEFAULT}（直连 dashscope、显式关思考、支持风格指令做习语意译）。"
+            "弃用理由与实测证据见 ASR-API.md「纯文本翻译」。"
+        )
 
     video: Path = args.video.expanduser().resolve()
     if not video.exists():
