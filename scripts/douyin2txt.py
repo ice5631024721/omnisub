@@ -220,6 +220,12 @@ def asr_transcribe(mp3: Path, key: str, asr_json_out: Path) -> str:
     返回带 properties.original_duration_in_milliseconds（覆盖守卫要用）。
     """
     bl = find_tool("bl")
+    # key 走**环境变量**而不是 --api-key：argv 在进程表里对同机其他用户可见
+    #（macOS/Linux 的 ps 默认就能看到别人的完整命令行）。2026-10-04 实测 bl 认
+    # DASHSCOPE_API_KEY（显式 env -u OPENAI_API_KEY 仍能跑通），所以这里等价但更安全。
+    # tool_env() 是 os.environ 的副本，后写覆盖前写：--api-key 传的值仍然优先。
+    env = tool_env()
+    env["DASHSCOPE_API_KEY"] = key
     p = run(
         [
             bl,
@@ -233,12 +239,10 @@ def asr_transcribe(mp3: Path, key: str, asr_json_out: Path) -> str:
             "zh",
             "--output",
             "text",
-            "--api-key",
-            key,
             "--out",
             str(asr_json_out),
         ],
-        env=tool_env(),
+        env=env,
         timeout=600,
     )
     if p.returncode != 0:
@@ -269,8 +273,19 @@ def main() -> None:
 
     cookie = load_cookies()
     tmp = Path(tempfile.gettempdir())
-    work = tmp / f"{TMP_PREFIX}{os.getpid()}"
-    work.mkdir(exist_ok=True)
+    # mkdtemp 而不是 tmp/f"{TMP_PREFIX}{pid}"。理由按平台分（别照抄一句"世界可读"就
+    # 当成到处成立——2026-10-04 实测纠正过一次，见下）：
+    #   Linux：TMPDIR 通常未设置 → gettempdir() 返回 /tmp（1777）。旧写法在那里既是可预测
+    #     又是全局可读，同机攻击者可预建同名目录或在里面放符号链接（write_bytes /
+    #     ffmpeg -y 都跟随符号链接）诱导覆写任意可写文件，转写正文也人人可读。
+    #     **本机 macOS 无法实测这一条**，是按 Python 标准行为推断。
+    #   macOS：TMPDIR 指向每用户目录，实测 /var/folders/…/T 本身已是 0700，别人连列目录
+    #     都做不到 —— 所以这里旧写法的"全局可读"**不成立**，只剩同用户可预测这一条（价值有限，
+    #     同用户本就能读你的数据）。
+    # mkdtemp 一次解决两者：原子创建、名字不可预测、自身 0700。
+    # 刻意**不删** work：图片分支打印的图片路径、视频分支打印的 workdir 都是文档化产出，
+    # 删了就是毁约。这里只保证它私密。
+    work = Path(tempfile.mkdtemp(prefix=TMP_PREFIX, dir=tmp))
 
     t = {}
     t["triage"] = time.time() - t0
